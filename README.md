@@ -9,7 +9,12 @@ This library takes a command-line string as input and parses it into a command a
 *   Parses a command-line string into a command and arguments.
 *   Correctly handles arguments enclosed in double quotes.
 *   Supports MS-DOS/Windows style switches (e.g., `/P`, `/O:N`).
-*   Lightweight and has no external dependencies.
+
+## Installation
+
+```
+pip install lark-parser regex
+```
 
 ## Usage
 
