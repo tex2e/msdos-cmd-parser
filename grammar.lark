@@ -1,0 +1,372 @@
+// -------------------------------------------------------------
+// This file represents the syntax of MS-DOS commands in EBNF notation.
+// It is used for parsing with Lark.
+// -------------------------------------------------------------
+
+// Entry point for parsing
+?start: program
+
+// A program consists of multiple comment lines or command lines
+program: WS? (command_rem NL WS_INLINE? | line WS_INLINE? NL WS_INLINE? | emptyline)+
+       | WS? (command_rem NL WS_INLINE? | line WS_INLINE? NL WS_INLINE? | emptyline)* line WS_INLINE?
+subprogram: WS? (command_rem NL WS_INLINE? | subline WS_INLINE? NL WS_INLINE? | emptyline)+
+          | WS? (command_rem NL WS_INLINE? | subline WS_INLINE? NL WS_INLINE? | emptyline)* subline WS_INLINE?
+
+emptyline: WS
+
+// A line can be a command, a statement, or a label
+?line: command_line
+     | statement
+     | label
+?subline: subcommand_line
+        | statement
+        | label
+
+// --- Comment Lines ---
+
+// REM command
+command_rem.9: AT? REM WS_INLINE_ONCE REM_COMMENT?                                // REM comment
+             | AT? REM (COLON|DOT|MINUS|EQ|PAREN_LEFT|PAREN_RIGHT) REM_COMMENT?   // Also allows things like REM:comment
+             | AT? REM
+REM.9: "rem"i
+// Matches everything except newline (\n)
+REM_COMMENT.9: /
+    (    \^[\r\n]
+        |[^\r\n]++
+    )++
+/x
+
+// --- Statements ---
+
+// List of statements
+?statement: AT? statement_if
+          | AT? statement_for
+
+// if statement (https://ss64.com/nt/if.html)
+//   if condition (command)
+//   if condition (command) else (command)
+//   if condition (command) else if (command) else (command)
+statement_if.5: IF WS_INLINE test WS_INLINE line
+              | IF WS_INLINE test WS_INLINE line WS_INLINE? statement_else?
+statement_else.5: ELSE WS_INLINE statement_if
+                | ELSE WS_INLINE line
+IF: "if"i
+ELSE: "else"i
+// String comparison
+test: (OPTION_I WS_INLINE)? NOT WS_INLINE COMPARE_VALUE WS_INLINE? (EQEQ | compare_op) WS_INLINE? COMPARE_VALUE  -> test_not_comp
+    | (OPTION_I WS_INLINE)? COMPARE_VALUE WS_INLINE? (EQEQ | compare_op) WS_INLINE? COMPARE_VALUE                -> test_comp
+    | NOT WS_INLINE EXIST WS_INLINE FILEPATH                   -> test_not_exist
+    | EXIST WS_INLINE FILEPATH                                 -> test_exist
+    | NOT WS_INLINE DEFINED WS_INLINE (IDENTIFIER | ARG1)      -> test_not_defined
+    | DEFINED WS_INLINE (IDENTIFIER | ARG1)                    -> test_defined
+    | NOT WS_INLINE ERRORLEVEL WS_INLINE SIGNED_INT            -> test_not_errorlevel
+    | ERRORLEVEL WS_INLINE SIGNED_INT                          -> test_errorlevel
+// Comparison operators
+?compare_op: EQU | NEQ | LSS | LEQ | GTR | GEQ
+EQEQ: "=="
+EQU: "equ"i  // Equal
+NEQ: "neq"i  // Not equal
+LSS: "lss"i  // Less than <
+LEQ: "leq"i  // Less than or Equal <=
+GTR: "gtr"i  // Greater than >
+GEQ: "geq"i  // Greater than or equal >=
+EQ: "="
+NOT: "not"i
+EXIST: "exist"i
+DEFINED: "defined"i
+ERRORLEVEL: "errorlevel"i
+COMPARE_VALUE: /
+    (
+         "(^"|[^"]++)*+"                                 # String
+        |%(~[fdpnxsatz]*)?[0-9]                          # Variable (%1)
+        |%(?![~0-9])                                     # Variable (%VAR%)
+          ([^%:~ \r\n]+)                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (%VAR:~0,5%)
+            |\:[^=\r\n]+=[^%\r\n]*                       # Variable substitution (%VAR:"='%)
+          )?
+         %
+        |!(?![~0-9])                                     # Variable (!VAR!)
+          ([^!:~ \r\n])+                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (!VAR:~0,5!)
+            |\:[^=\r\n]+=[^!\r\n]*                       # Variable substitution (!VAR:"='!)
+          )?
+         !
+        |[^"= \t\r\n]++
+    )++
+/xi
+DQUOTE_STRING: /"(^"|""|[^"]+)*"/
+SQUOTE_STRING: /'(^'|[^']+)*'/
+OPTION_I: "/i"i
+
+// for statement (https://ss64.com/nt/for.html)
+//   for /f "option" %%i in (filenameset) do command
+//   for /f "option" %%i in ("string") do command
+//   for /f "option" %%i in ('command') do command
+//   for /r [path] %%i in (set) do command
+//   for /l %%i in (start,step,end) do command
+//   for /d %%i in (folder_set) do command
+//   for %%i in (set) do command
+statement_for.9: FOR WS_INLINE OPTION_F (WS_INLINE OPTIONS)? WS_INLINE for_parameter WS_INLINE IN WS_INLINE PAREN_LEFT WS_INLINE? for_range WS_INLINE? PAREN_RIGHT WS_INLINE? DO WS_INLINE line  -> statement_for_f
+               | FOR WS_INLINE OPTION_R (WS_INLINE FILEPATH)? WS_INLINE for_parameter WS_INLINE IN WS_INLINE PAREN_LEFT WS_INLINE? for_range WS_INLINE? PAREN_RIGHT WS_INLINE? DO WS_INLINE line  -> statement_for_r
+               | FOR WS_INLINE OPTION_L WS_INLINE for_parameter WS_INLINE IN WS_INLINE PAREN_LEFT WS_INLINE? for_range_start_step_end WS_INLINE? PAREN_RIGHT WS_INLINE? DO WS_INLINE line  -> statement_for_l
+               | FOR WS_INLINE OPTION_D (WS_INLINE OPTION_R)? WS_INLINE for_parameter WS_INLINE IN WS_INLINE PAREN_LEFT WS_INLINE? for_range_set WS_INLINE? PAREN_RIGHT WS_INLINE? DO WS_INLINE line  -> statement_for_d
+               | FOR WS_INLINE for_parameter WS_INLINE IN WS_INLINE PAREN_LEFT WS_INLINE? for_range_set WS_INLINE? PAREN_RIGHT WS_INLINE? DO WS_INLINE line  -> statement_for_none
+for_parameter: PERCENTPERCENT (LETTER | DIGIT)
+for_range: SQUOTE_STRING         -> for_range_command
+         | DQUOTE_STRING         -> for_range_text
+         | FOR_RANGE_TEXT        -> for_range_filename
+for_range_set: FOR_RANGE_SET
+for_range_start_step_end: for_range_start COMMA for_range_step COMMA for_range_end
+for_range_start: FOR_RANGE_INT
+for_range_step: FOR_RANGE_INT
+for_range_end: FOR_RANGE_INT
+FOR: "for"i
+OPTION_F: "/f"i
+OPTION_R: "/r"i
+OPTION_D: "/d"i
+OPTION_L: "/l"i
+OPTIONS: DQUOTE_STRING
+PERCENTPERCENT: "%%"
+IN: "in"i
+DO: "do"i
+PAREN_LEFT: "("
+PAREN_RIGHT: ")"
+FOR_RANGE_TEXT: /[^)'"]+/
+FOR_RANGE_SET: /[^)]+/
+COMMA: ","
+FOR_RANGE_INT: /[^),]+/
+
+
+// --- Command Lines ---
+
+// Command lines can be joined by chaining operators (&&, ||, &)
+?command_line: pipeline (CHAIN_OP WS_INLINE pipeline)*
+?subcommand_line: subpipeline (CHAIN_OP WS_INLINE subpipeline)*
+CHAIN_OP: "&&" | "||" | "&"
+
+// Pipelines can be joined by the pipe operator (|)
+?pipeline: command (PIPE WS_INLINE? command)*
+?subpipeline: subcommand (PIPE WS_INLINE? subcommand)*
+PIPE: "|"
+
+// A command is a single-line command
+?command: command_oneline
+        | PAREN_LEFT subprogram PAREN_RIGHT WS_INLINE? redirect ~ 0..2        -> group
+?subcommand: subcommand_oneline
+           | PAREN_LEFT subprogram PAREN_RIGHT WS_INLINE? redirect ~ 0..2     -> group
+
+// List of commands
+?command_oneline: AT? command_set_toplevel redirect ~ 0..2
+                | AT? command_setlocal redirect ~ 0..2
+                | AT? command_echo_toplevel redirect ~ 0..2
+                | redirect? AT? command_echo_toplevel   // Case where redirection cannot be written immediately after, without allowing trailing spaces, like > file echo 1
+                | AT? command_call_toplevel redirect ~ 0..2
+                | AT? command_cd redirect ~ 0..2
+                | AT? command_exe_toplevel redirect ~ 0..2
+                | command_goto
+?subcommand_oneline: AT? command_set redirect ~ 0..2
+                | AT? command_setlocal redirect ~ 0..2
+                | AT? command_echo redirect ~ 0..2
+                | redirect? AT? command_echo   // Case where redirection cannot be written immediately after, without allowing trailing spaces, like > file echo 1
+                | AT? command_call redirect ~ 0..2
+                | AT? command_cd redirect ~ 0..2
+                | AT? command_exe redirect ~ 0..2
+                | command_goto
+AT: "@"
+
+
+// --- Commands ---
+
+// SET command
+command_set: SET (WS_INLINE OPTION_P)? WS_INLINE VARIABLE_NAME WS_INLINE? EQ ARG_VALUE_IN_SET?
+           | SET WS_INLINE OPTION_A WS_INLINE VARIABLE_NAME WS_INLINE? EQ WS_INLINE? ARG_VALUE_IN_SET? -> command_set_expr
+           | SET WS_INLINE VARIABLE_NAME WS_INLINE?            -> command_set_disp
+           | SET WS_INLINE?                                    -> command_set_disp
+// SET command_toplevel version (consumes all parentheses)
+command_set_toplevel: SET (WS_INLINE OPTION_P)? WS_INLINE VARIABLE_NAME WS_INLINE? EQ ARG_VALUE_IN_SET_TOPLEVEL?           -> command_set
+                    | SET WS_INLINE OPTION_A WS_INLINE VARIABLE_NAME WS_INLINE? EQ WS_INLINE? ARG_VALUE_IN_SET_TOPLEVEL?   -> command_set_expr
+                    | SET WS_INLINE VARIABLE_NAME WS_INLINE?            -> command_set_disp
+                    | SET WS_INLINE?                                    -> command_set_disp
+SET: "set"i
+command_set_option: OPTION_A | OPTION_P
+OPTION_A: "/a"i
+OPTION_P: "/p"i
+// Variable name (can be expanded with %)
+VARIABLE_NAME: /[^=<>\/ \t\f\r\n]+/
+// SETLOCAL command
+command_setlocal: SETLOCAL WS_INLINE ARG_VALUE_IN_SET
+SETLOCAL: "setlocal"i
+// ECHO command
+command_echo: ECHO WS_INLINE_ONCE ARG_VALUE_IN_PAREN?
+            | ECHODOT WS_INLINE?
+            | ECHO
+// ECHO command_toplevel version (consumes all parentheses)
+command_echo_toplevel: ECHO WS_INLINE_ONCE ARG_VALUE_IN_PAREN_TOPLEVEL?  -> command_echo
+                     | ECHODOT WS_INLINE?                                -> command_echo
+                     | ECHO                                              -> command_echo
+ECHO: "echo"i
+DOT: "."
+ECHODOT: "echo."i
+// CALL command
+command_call: CALL WS_INLINE label WS_INLINE ARG_VALUE_IN_PAREN?       -> command_call_label
+            | CALL WS_INLINE label                                     -> command_call_label
+            | CALL WS_INLINE FILEPATH WS_INLINE ARG_VALUE_IN_PAREN?    -> command_call_file
+            | CALL WS_INLINE FILEPATH                                  -> command_call_file
+// CALL command_toplevel version (consumes all parentheses)
+command_call_toplevel: CALL WS_INLINE label WS_INLINE ARG_VALUE_IN_PAREN_TOPLEVEL?       -> command_call_label
+                     | CALL WS_INLINE label                                              -> command_call_label
+                     | CALL WS_INLINE FILEPATH WS_INLINE ARG_VALUE_IN_PAREN_TOPLEVEL?    -> command_call_file
+                     | CALL WS_INLINE FILEPATH                                           -> command_call_file
+CALL: "call"i
+// CDコマンド
+command_cd: CD WS_INLINE ARG_VALUE_IN_PAREN?
+          | CD
+CD: "cd"i
+// GOTO command
+command_goto: GOTO WS_INLINE COLON? LABEL
+GOTO: "goto"i
+// All commands other than the above will match the following command_exe
+// EXE call
+command_exe: FILEPATH WS_INLINE ARG_VALUE_IN_PAREN?
+           | FILEPATH
+// EXE call_toplevel version (consumes all parentheses)
+command_exe_toplevel: FILEPATH WS_INLINE ARG_VALUE_IN_PAREN_TOPLEVEL? -> command_exe
+                    | FILEPATH                                        -> command_exe
+
+
+// --- Redirection ---
+
+// Redirection is either standard output or standard error
+?redirect: redirect_stdout
+         | redirect_stderr
+// Standard output
+redirect_stdout: IO1_REDIRECT WS_INLINE? REDIRECT_TARGET WS_INLINE?
+// Standard error
+redirect_stderr: IO2_REDIRECT WS_INLINE? REDIRECT_TARGET WS_INLINE?
+// Redirection target
+REDIRECT_TARGET: /[^() \t\f\r\n]+/
+REDIRECT.0: /(?<!^)>{1,2}/
+IO1_REDIRECT.0: IO1? REDIRECT
+IO2_REDIRECT.0: IO2 REDIRECT
+IO1.0: /1(?=>)/
+IO2.0: /2(?=>)/
+
+
+// --- Common ---
+
+// Identifier
+IDENTIFIER: CNAME
+// Command argument
+ARG1: /%(~[fdpnxsatz]*)?[0-9]/
+
+// Label
+label: COLON LABEL PLUS?
+LABEL: ("_"|LETTER) ("_"|LETTER|DIGIT|PLUS|MINUS)*
+COLON: ":"
+PLUS: "+"
+MINUS: "-"
+
+// Value for SET command
+//   Note: In MS-DOS specifications, even if a redirect exists on the right side of SET, if it starts with a double quote, it is not interpreted as a redirect.
+//   For example, in `SET VAL="select * from TABLE where COL1 <> 999"`, `<>` is set as the value of the variable.
+//   Also, when `SET VAL=%VAL% and COL2 <> 999` and the variable `VAL` contains an unclosed double quote, `<>` is set as the value of the variable.
+// Matches everything except redirection (>&|) and newline (\n).
+ARG_VALUE_IN_SET.2: /
+    (    \^.                                             # Escape with caret
+        |<>|<=|>=|>[ ]'|<[ ]'                            # Consume when it can be considered an SQL statement instead of a redirect (*)
+        |(?<paren>\((^\)|[^()\r\n]++|(?&paren))*+\))     # Parentheses enclosure
+        |"(^"|[^"\r\n]++)*+"                             # String enclosure
+        |[^^"<>()\r\n]++
+    )++
+/x
+// At the top level, it matches all parentheses.
+ARG_VALUE_IN_SET_TOPLEVEL.2: /
+    (    \^.                                             # Escape with caret
+        |<>|<=|>=|>[ ]'|<[ ]'                            # Consume when it can be considered an SQL statement instead of a redirect (*)
+        |"(^"|[^"\r\n]++)*+"?                            # String enclosure (Note: may not be closed)
+        |[^^"<>\r\n]++
+    )++
+/x
+
+// Command arguments. Matches everything except redirection (>&|), newline (\n), and closing parenthesis ()).
+ARG_VALUE_IN_PAREN.2: /
+    (    \^.                                             # Escape with caret
+        |"(^"|[^"\r\n]++)*+"                             # String enclosure
+        |(?<paren>\((^\)|[^()\r\n]++|(?&paren))*+\))     # Parentheses enclosure ★★★
+        |\(                                              # Opening parenthesis only ★★★
+        |[12](?!>)                                       # Numbers other than redirection
+        |%(~[fdpnxsatz]*)?[0-9]                          # Variable (%1)
+        |%(?![~0-9])                                     # Variable (%VAR%)
+          ([^%:~ \r\n]+)                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (%VAR:~0,5%)
+            |\:[^=\r\n]+=[^%\r\n]*                       # Variable substitution (%VAR:"='%)
+          )?
+         %
+        |!(?![~0-9])                                     # Variable (!VAR!)
+          ([^!:~ \r\n]+)                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (!VAR:~0,5!)
+            |\:[^=\r\n]+=[^!\r\n]*                       # Variable substitution (!VAR:"='!)
+          )?
+         !
+        |[^^\r\n<>()&|^"12]++
+    )+
+/x
+// Command arguments. Matches everything except redirection (>&|), newline (\n), and closing parenthesis ()).
+// At the top level, parentheses are always consumed.
+ARG_VALUE_IN_PAREN_TOPLEVEL.2: /
+    (    \^.                                             # Escape with caret
+        |"(^"|[^"\r\n]++)*+"                             # String enclosure
+        |[12](?!>)                                       # Numbers other than redirection
+        |%(~[fdpnxsatz]+)?[0-9]                          # Variable (%1)
+        |%(?![~0-9])                                     # Variable (%VAR%)
+          ([^%:~ \r\n]+)                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (%VAR:~0,5%)
+            |\:[^=\r\n]+=[^%\r\n]*                       # Variable substitution (%VAR:"='%)
+          )?
+         %
+        |!(?![~0-9])                                     # Variable (!VAR!)
+          ([^!:~ \r\n]+)                                 # Variable name
+          (?:
+             \:~-?[0-9]+(,-?[0-9]+)?                     # Substring (!VAR:~0,5!)
+            |\:[^=\r\n]+=[^!\r\n]*                       # Variable substitution (!VAR:"='!)
+          )?
+         !
+        |[^^\r\n<>&|^"12]++
+    )++
+/x
+// References:
+//   Substring: https://ss64.com/nt/syntax-substring.html
+//   Variable substitution: https://ss64.com/nt/syntax-replace.html
+
+// Filename
+// Note: Full-width spaces are excluded because the parser consumes too much if they are used instead of regular spaces.
+FILEPATH.0: /
+    (    \"[^\"\r\n]++\"                           # With double quotes
+        |[^:<> \t\f\r\n　][^<> \t\f\r\n　]++        # Without double quotes
+    )
+/x
+
+// Newline
+NL: /\r?\n/
+// Whitespace
+WS_INLINE: (" "|/\t/|"　")+
+// Whitespace (appears only once)
+WS_INLINE_ONCE.6: (" "|/\t/|"　")
+
+// Common parsers
+// https://github.com/lark-parser/lark/blob/master/lark/grammars/common.lark
+%import common.DIGIT      // "0".."9"
+%import common.INT        // DIGIT+
+%import common.SIGNED_INT // ["+"|"-"] INT
+%import common.LETTER     // "A".."Z" | "a".."z"
+%import common.CNAME      // ("_"|LETTER) ("_"|LETTER|DIGIT)*
+%import common.WS         // /[ \t\f\r\n]/+
+//%import common.WS_INLINE  // (" "|/\t/)+
+
+// %ignore WS_INLINE
+%ignore AT
