@@ -5,7 +5,7 @@ IF "%VARIABLE1:~-1%" == "\" SET VARIABLE1=%VARIABLE1:~0,-1%
 
 
 IF "%FLG%" == "1" (
-    SET USB_REMDIR=%SHARE_DIR_ROOT%\path\to\dir
+    SET MYDIR=%SHARE_DIR_ROOT%\path\to\dir
 ) else (
     REM noop
 )
@@ -31,7 +31,7 @@ FOR /F "delims= " %%i IN ("1 2 3") DO FOR /F "delims= " %%i IN ("4 5 6") DO echo
 
 
 ECHO ---------- TEST TEXT ----------
-ECHO ---------- TEST TEXT ---------- >> %USL_JRNL%
+ECHO ---------- TEST TEXT ---------- >> %OUTPUT_LOG%
 
 echo 123 && echo 456 || echo 789
 

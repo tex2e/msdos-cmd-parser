@@ -27,7 +27,7 @@ program
       subprogram
         command_set
           SET
-          USB_REMDIR
+          MYDIR
           =
           %SHARE_DIR_ROOT%\path\to\dir
       )
@@ -198,7 +198,7 @@ program
       ---------- TEST TEXT ---------- 
     redirect_stdout
       >>
-      %USL_JRNL%
+      %OUTPUT_LOG%
   emptyline	
   command_line
     command_echo
